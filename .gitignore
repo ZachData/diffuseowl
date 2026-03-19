@@ -1,0 +1,7 @@
+*
+!*.py
+!*.md
+!.gitignore
+!*/
+!*/*/
+gemma-3-12b/
