@@ -50,6 +50,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
+# Ensure the fixes/ directory is always on the path so all fix modules are
+# importable regardless of which runner function executes first.
+sys.path.insert(0, str(Path(__file__).parent))
+
+# Also add the project root (parent of fixes/) so project modules (config,
+# src.*) are importable when running from anywhere.
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 OUTPUT_DIR = Path("fixes/output")
 
 
@@ -59,9 +69,6 @@ OUTPUT_DIR = Path("fixes/output")
 
 def run_fix_letter_position(dry_run: bool) -> dict:
     """Run fixes/fix_letter_position.py"""
-    sys.path.insert(0, str(Path(__file__).parent))
-    import fix_letter_position as flp
-
     print("\n" + "=" * 70)
     print("FIX 1 OF 3 — Letter Token Position (Core Sabotage)")
     print("=" * 70)
@@ -69,6 +76,7 @@ def run_fix_letter_position(dry_run: bool) -> dict:
     print("       src/activations.py:256-265 (index space mismatch)")
 
     try:
+        import fix_letter_position as flp
         flp.main(dry_run=dry_run)
         files = [
             "fixes/output/sabotage_report.txt",
@@ -80,6 +88,8 @@ def run_fix_letter_position(dry_run: bool) -> dict:
                 "fixes/output/fixed_probed_tokens_pos-letter.json",
             ]
         return {"status": "ok", "files": [f for f in files if Path(f).exists()]}
+    except ImportError as e:
+        return {"status": "skipped", "reason": str(e)}
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "error": str(e)}
@@ -87,23 +97,106 @@ def run_fix_letter_position(dry_run: bool) -> dict:
 
 def run_fix_shrinking_test_set(cache_dir: Optional[str]) -> dict:
     """Run fixes/fix_shrinking_test_set.py"""
-    import fix_shrinking_test_set as fsts
-
     print("\n" + "=" * 70)
     print("FIX 2 OF 3 — Shrinking Test Set")
     print("=" * 70)
     print("Bug:  src/probes.py:1638-1643  (X_test = idx[n:] shrinks as N grows)")
 
     try:
+        import fix_shrinking_test_set as fsts
         fsts.main(cache_dir=cache_dir)
         files = [
             "fixes/output/shrinking_test_set_report.txt",
             "fixes/output/shrinking_test_set_comparison.json",
         ]
         return {"status": "ok", "files": [f for f in files if Path(f).exists()]}
+    except ImportError as e:
+        return {"status": "skipped", "reason": str(e)}
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "error": str(e)}
+
+
+def run_fix_ablations(cache_dir: Optional[str], benign_cache_dir: Optional[str],
+                      layer: int, ablations: List[str], fast: bool,
+                      n_trials: int) -> dict:
+    """Run fixes/fix_ablations.py (requires real cache)"""
+    print("\n" + "=" * 70)
+    print("FIX 5 — Ablation Suite (alpha, n_trials, positions, benign baseline)")
+    print("=" * 70)
+
+    if cache_dir is None:
+        print("  [skip] --cache-dir not provided")
+        return {"status": "skipped", "reason": "no cache dir"}
+
+    old_argv = sys.argv
+    try:
+        import fix_ablations as fa
+        new_argv = ["fix_ablations.py", "--cache-dir", cache_dir,
+                    "--layer", str(layer), "--n-trials", str(n_trials),
+                    "--ablations"] + ablations
+        if benign_cache_dir:
+            new_argv += ["--benign-cache-dir", benign_cache_dir]
+        if fast:
+            new_argv.append("--fast")
+        sys.argv = new_argv
+        fa.main()
+        files = [
+            "fixes/output/ablations_report.txt",
+            "fixes/output/ablations.json",
+        ]
+        return {"status": "ok", "files": [f for f in files if Path(f).exists()]}
+    except SystemExit:
+        return {"status": "ok", "files": []}
+    except ImportError as e:
+        print(f"  [skip] module not found: {e}")
+        return {"status": "skipped", "reason": str(e)}
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+    finally:
+        sys.argv = old_argv
+
+
+def run_fix_probe_validation(cache_dir: Optional[str], layer: int,
+                             no_probes: bool, all_layers: bool,
+                             n_trials: int) -> dict:
+    """Run fixes/fix_probe_validation.py (requires real cache)"""
+    print("\n" + "=" * 70)
+    print("FIX 4 — Probe Validation (cache-dependent analyses)")
+    print("=" * 70)
+    print("Analyses: AUROC comparison, letter bias, per-subject compliance, layer sweep")
+
+    if cache_dir is None:
+        print("  [skip] --cache-dir not provided")
+        return {"status": "skipped", "reason": "no cache dir"}
+
+    old_argv = sys.argv
+    try:
+        import fix_probe_validation as fpv
+        new_argv = ["fix_probe_validation.py", "--cache-dir", cache_dir,
+                    "--layer", str(layer), "--n-trials", str(n_trials)]
+        if no_probes:
+            new_argv.append("--no-probes")
+        if all_layers:
+            new_argv.append("--all-layers")
+        sys.argv = new_argv
+        fpv.main()
+        files = [
+            "fixes/output/probe_validation_report.txt",
+            "fixes/output/probe_validation.json",
+        ]
+        return {"status": "ok", "files": [f for f in files if Path(f).exists()]}
+    except SystemExit:
+        return {"status": "ok", "files": []}
+    except ImportError as e:
+        print(f"  [skip] module not found: {e}")
+        return {"status": "skipped", "reason": str(e)}
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+    finally:
+        sys.argv = old_argv
 
 
 def run_fix_prompt_variants(
@@ -113,8 +206,6 @@ def run_fix_prompt_variants(
     reliable_questions: Optional[str],
 ) -> dict:
     """Run fixes/fix_prompt_variants.py"""
-    import fix_prompt_variants as fpv
-
     print("\n" + "=" * 70)
     print("FIX 3 OF 3 — Prompt Variant Analysis")
     print("=" * 70)
@@ -123,6 +214,7 @@ def run_fix_prompt_variants(
 
     old_argv = sys.argv
     try:
+        import fix_prompt_variants as fpv
         new_argv = ["fix_prompt_variants.py"]
         if dry_run:
             new_argv.append("--dry-run")
@@ -143,6 +235,21 @@ def run_fix_prompt_variants(
         return {"status": "ok", "files": [f for f in files if Path(f).exists()]}
     except SystemExit:
         return {"status": "ok", "files": []}
+    except ImportError as e:
+        # fix_prompt_variants itself imports project modules only when doing a
+        # live run. The prompts doc is written before that, so it still exists.
+        print(f"  [skip live run] project modules not importable: {e}")
+        print("  Prompt text saved; generation skipped.")
+        print("  Run from project root with VLLM running for live generation.")
+        files = [
+            "fixes/output/prompt_variants_prompts.txt",
+            "fixes/output/prompt_variants_report.txt",
+        ]
+        return {
+            "status": "skipped",
+            "reason": f"project modules not importable ({e})",
+            "files": [f for f in files if Path(f).exists()],
+        }
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "error": str(e)}
@@ -234,148 +341,54 @@ def build_master_summary(fix_results: dict, cache_available: bool) -> str:
         lines.append(s)
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    w("=" * 70)
-    w("MASTER SABOTAGE ANALYSIS — fixes/run_all.py")
-    w("Paper: diffuse  |  Codename: owl")
-    w(f"Run at: {timestamp}")
-    w("=" * 70)
-    w()
-    w("SUMMARY")
-    w("-" * 70)
-    w(f"  {len(KNOWN_BUGS)} bugs found. {len(fix_results)} fix analyses run.")
+    w(f"run_all  {timestamp}  cache={'yes' if cache_available else 'no (synthetic)'}")
     w()
 
+    # bug status table
+    w(f"  {'id':<22} {'sev':<10} {'status'}")
+    w("  " + "-" * 55)
     for bug in KNOWN_BUGS:
         result = fix_results.get(bug["id"], {})
-        status = result.get("status", "not run")
+        status = result.get("status", "skipped")
+        reason = result.get("reason", "")
         status_str = {
-            "ok":      "✓ analysis complete",
-            "error":   "✗ error: " + result.get("error", "?"),
-            "not run": "— skipped",
+            "ok":      "ok",
+            "error":   "ERR: " + result.get("error", "?"),
+            "skipped": f"skipped" + (f" ({reason})" if reason else ""),
         }.get(status, status)
-        w(f"  [{bug['severity']:8}]  {bug['title']}")
-        w(f"              {status_str}")
+        w(f"  {bug['id']:<22} {bug['severity']:<10} {status_str}")
+    w()
+
+    # bug detail — location + one-line effect only
+    for bug in KNOWN_BUGS:
+        w(f"{bug['id']}")
+        w(f"  loc     {', '.join(bug['files'])}")
+        w(f"  effect  {bug['effect']}")
+        w(f"  fix     {bug['fix_files'][0]}")
         w()
 
-    w()
-    w("BUGS — DETAIL")
-    w("-" * 70)
-
-    for i, bug in enumerate(KNOWN_BUGS, 1):
-        w()
-        w(f"  {i}. {bug['title']}")
-        w(f"     Severity:   {bug['severity']}")
-        w(f"     Location:   {', '.join(bug['files'])}")
-        w(f"     Paper says: {bug['paper_claim']}")
-        w(f"     Code does:  {bug['what_code_does']}")
-        w(f"     Effect:     {bug['effect']}")
-        for ff in bug["fix_files"]:
-            w(f"     Fix:        {ff}")
-
-    w()
-    w()
-    w("OUTPUT FILES")
-    w("-" * 70)
-    w()
-
+    # output file manifest
     file_table = [
-        ("fixes/fix_letter_position.py",
-         "Fix 1 runner + corrected token search logic"),
-        ("fixes/fixed_activations_patch.py",
-         "Fix 1 patch — drop-in for src/activations.py"),
-        ("fixes/fix_shrinking_test_set.py",
-         "Fix 2 runner + drop-in for src/probes.py"),
-        ("fixes/fix_prompt_variants.py",
-         "Fix 3 runner — 4 sandbagging prompt variants"),
-        ("fixes/run_all.py",
-         "This script"),
-        ("fixes/output/run_all_summary.txt",
-         "This file"),
-        ("fixes/output/sabotage_report.txt",
-         "Fix 1: full analysis (LLM handoff)"),
-        ("fixes/output/index_space_demo.txt",
-         "Fix 1: Bug 2 index space proof"),
-        ("fixes/output/sabotage_comparison.json",
-         "Fix 1: token distribution comparison"),
-        ("fixes/output/fixed_probed_tokens_pos-letter.json",
-         "Fix 1: corrected per-sample letter list"),
-        ("fixes/output/shrinking_test_set_report.txt",
-         "Fix 2: full analysis (LLM handoff)"),
-        ("fixes/output/shrinking_test_set_comparison.json",
-         "Fix 2: AUROC comparison JSON"),
-        ("fixes/output/prompt_variants_prompts.txt",
-         "Fix 3: all 4 prompts side by side"),
-        ("fixes/output/prompt_variants_report.txt",
-         "Fix 3: compliance tables (LLM handoff)"),
-        ("fixes/output/prompt_variants_comparison.json",
-         "Fix 3: per-variant stats + subject breakdown"),
+        ("fixes/fix_letter_position.py",                       "Fix 1 runner"),
+        ("fixes/fixed_activations_patch.py",                   "Fix 1 drop-in patch"),
+        ("fixes/fix_shrinking_test_set.py",                    "Fix 2 runner + drop-in"),
+        ("fixes/fix_prompt_variants.py",                       "Fix 3 runner"),
+        ("fixes/output/sabotage_report.txt",                   "Fix 1 data"),
+        ("fixes/output/sabotage_comparison.json",              "Fix 1 token distributions"),
+        ("fixes/output/fixed_probed_tokens_pos-letter.json",   "Fix 1 corrected letters"),
+        ("fixes/output/shrinking_test_set_report.txt",         "Fix 2 data"),
+        ("fixes/output/shrinking_test_set_comparison.json",    "Fix 2 AUROC table"),
+        ("fixes/output/prompt_variants_prompts.txt",           "Fix 3 prompt text"),
+        ("fixes/output/prompt_variants_report.txt",            "Fix 3 data"),
+        ("fixes/output/prompt_variants_comparison.json",       "Fix 3 per-variant JSON"),
+        ("fixes/output/probe_validation_report.txt",           "Fix 4 AUROC+cross-tabs"),
+        ("fixes/output/probe_validation.json",                 "Fix 4 machine-readable"),
     ]
-
-    w(f"  {'':3} {'File':<46} Contents")
-    w("  " + "-" * 73)
-    for fname, desc in file_table:
+    w(f"  {'':2} {'file':<46} note")
+    w("  " + "-" * 70)
+    for fname, note in file_table:
         marker = "✓" if Path(fname).exists() else "·"
-        w(f"  {marker}  {fname:<46} {desc}")
-
-    w()
-    w()
-    w("LLM HANDOFF")
-    w("-" * 70)
-    w("  Provide these six files to an LLM for full analysis:")
-    w()
-    w("  1. fixes/output/sabotage_report.txt")
-    w("     Fix 1 narrative. Which token was probed vs what was claimed.")
-    w()
-    w("  2. fixes/output/sabotage_comparison.json")
-    w("     Token distribution tables (sabotaged vs corrected).")
-    w("     With real cache data: per-sample letter list + agreement stats.")
-    w()
-    w("  3. fixes/output/shrinking_test_set_report.txt")
-    w("     Test set sizes at each N and AUROC comparison.")
-    w()
-    w("  4. fixes/output/shrinking_test_set_comparison.json")
-    w("     AUROC-vs-N for sabotaged and fixed evaluations with std dev.")
-    w("     Same structure as the original summary JSON from probe_analysis.py.")
-    w()
-    w("  5. fixes/output/prompt_variants_report.txt")
-    w("     Compliance tables across all four prompt variants.")
-    w("     Shows how much of the ~55% accuracy gap each fix recovers.")
-    w()
-    w("  6. fixes/output/prompt_variants_comparison.json")
-    w("     Per-variant stats with per-subject breakdown.")
-    w("     Math vs non-math compliance rate under each prompt.")
-    w()
-    w('  Suggested prompt: "These files document three sabotages found in a')
-    w('  research codebase. The paper claims linear probes detect sandbagging')
-    w('  at the answer-letter token with AUROC 0.966. Given the evidence,')
-    w('  assess: (1) which sabotage has the largest impact on the headline')
-    w('  result, (2) whether the central conclusion survives any of the fixes,')
-    w('  (3) which prompt variant yields the cleanest probe signal and why."')
-    w()
-    w()
-    w("NEXT STEPS TO FULLY VALIDATE")
-    w("-" * 70)
-    w("  1. Apply fixes/fixed_activations_patch.py to src/activations.py.")
-    w("     Replace find_letter_token_position with")
-    w("     find_letter_token_position_in_full_text.")
-    w()
-    w("  2. Replace measure_auroc_vs_training_size in src/probes.py with")
-    w("     measure_auroc_vs_training_size_fixed from fix_shrinking_test_set.py.")
-    w()
-    w("  3. Choose a corrected prompt from fix_prompt_variants.py:")
-    w("     - no_math:     minimal fix, maintains 89/11 split")
-    w("     - fifty_fifty: balanced classes, cleaner probe training")
-    w("     - honest:      cleanest signal — Pass 2 token encodes real deception")
-    w("     Update config/prompts.py accordingly.")
-    w()
-    w("  4. Re-run the activation cache:")
-    w("     python scripts/cache_lie_detector_activations.py --filtered")
-    w()
-    w("  5. Re-run probe sweep and compare:")
-    w("     python fixes/run_all.py --cache-dir <new_cache_dir>")
-    w()
-    w("=" * 70)
+        w(f"  {marker} {fname:<46} {note}")
 
     return "\n".join(lines)
 
@@ -405,10 +418,45 @@ def main():
         )
     )
     parser.add_argument(
+        "--benign-cache-dir", type=str, default=None,
+        help="Path to benign activation cache dir (for A6 benign baseline ablation)"
+    )
+    parser.add_argument(
+        "--ablations", nargs="+",
+        choices=["A1", "A2", "A3", "A4", "A5", "A6", "A7"],
+        default=["A1", "A2", "A3", "A4", "A5", "A7"],
+        help="Which ablations to run (default: all cache-only ablations)"
+    )
+    parser.add_argument(
+        "--ablations-fast", action="store_true",
+        help="Ablations: fewer N values and trials for quick turnaround"
+    )
+    parser.add_argument(
+        "--ablations-n-trials", type=int, default=5,
+        help="Ablations: trials per N (default: 5)"
+    )
+    parser.add_argument(
         "--skip", type=str, nargs="+",
-        choices=["letter_position", "shrinking_test_set", "prompt_variants"],
+        choices=["letter_position", "shrinking_test_set", "prompt_variants",
+                 "probe_validation", "ablations"],
         default=[],
         help="Skip one or more fixes by name"
+    )
+    parser.add_argument(
+        "--probe-layer", type=int, default=30,
+        help="Layer for probe validation and ablations (default: 30)"
+    )
+    parser.add_argument(
+        "--probe-no-probes", action="store_true",
+        help="Probe validation: distributions + cross-tabs only, skip training"
+    )
+    parser.add_argument(
+        "--probe-all-layers", action="store_true",
+        help="Probe validation: run layer sweep across all available layers"
+    )
+    parser.add_argument(
+        "--probe-n-trials", type=int, default=3,
+        help="Probe validation: trials per N (default: 3)"
     )
     parser.add_argument(
         "--prompt-variants", nargs="+",
@@ -429,12 +477,27 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=" * 70)
-    print("fixes/run_all.py — Sabotage Fix Suite  (3 fixes)")
+    print("fixes/run_all.py — Sabotage Fix Suite")
     print("Paper: diffuse  |  Codename: owl")
     print("=" * 70)
 
     if args.cache_dir:
         print(f"\nCache dir: {args.cache_dir}")
+        # Pre-flight: warn if activation .npy files are missing
+        _cache = Path(args.cache_dir)
+        _npy   = list(_cache.glob("activations_layer*.npy")) if _cache.exists() else []
+        if not _npy:
+            print(
+                "\n  [!] No activation .npy files found in cache dir."
+                "\n      Fix 2 will use real labels + random projection."
+                "\n      Fixes 4 and 5 (probe training / ablations) will be skipped."
+                "\n"
+                "\n      To generate activations, run from project root:"
+                "\n        python scripts/cache_lie_detector_activations.py --filtered"
+                "\n      Then re-run run_all.py for full results."
+            )
+        else:
+            print(f"\n  [ok] {len(_npy)} activation .npy file(s) found.")
     else:
         print(
             "\nNo --cache-dir provided."
@@ -470,6 +533,29 @@ def main():
         )
     else:
         print("\n[skip] Fix 3: prompt_variants")
+
+    if "probe_validation" not in args.skip:
+        fix_results["probe_validation"] = run_fix_probe_validation(
+            cache_dir=args.cache_dir,
+            layer=args.probe_layer,
+            no_probes=args.probe_no_probes,
+            all_layers=args.probe_all_layers,
+            n_trials=args.probe_n_trials,
+        )
+    else:
+        print("\n[skip] Fix 4: probe_validation")
+
+    if "ablations" not in args.skip:
+        fix_results["ablations"] = run_fix_ablations(
+            cache_dir=args.cache_dir,
+            benign_cache_dir=args.benign_cache_dir,
+            layer=args.probe_layer,
+            ablations=args.ablations,
+            fast=args.ablations_fast,
+            n_trials=args.ablations_n_trials,
+        )
+    else:
+        print("\n[skip] Fix 5: ablations")
 
     summary = build_master_summary(
         fix_results=fix_results,
